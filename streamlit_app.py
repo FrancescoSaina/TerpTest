@@ -28,7 +28,7 @@ def analyze_audio(audio_file):
 
     # Calculate filler words and hesitations
     filler_words = ["ehm", "uhm"]  # Example filler words, you can expand this list
-    filler_word_count = sum(w in audio_file.lower() for w in filler_words)
+    filler_word_count = sum(waveform.lower().count(w) for w in filler_words)
     hesitation_count = len(pauses[pauses > 3])
 
     # Plot waveform and pauses
