@@ -1,114 +1,67 @@
 import streamlit as st
-import torch
-import torchaudio
-from transformers import BertModel, BertTokenizer
+from transformers import BertTokenizer, BertModel, pipeline
 import librosa
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.ndimage import gaussian_filter
-import tempfile
-import os
-import deepspeech
+from scipy.ndimage import gaussian_filter1d
 
-# Load the BERT model and tokenizer (example with mBERT)
+# Load BERT model and tokenizer
 tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
 model = BertModel.from_pretrained('bert-base-multilingual-cased')
+bert_pipeline = pipeline('feature-extraction', model=model, tokenizer=tokenizer)
 
-# Load DeepSpeech model for ASR (change path as necessary)
-MODEL_PATH = 'path/to/deepspeech-0.9.3-models.pbmm'
-SCORER_PATH = 'path/to/deepspeech-0.9.3-models.scorer'
-ds = deepspeech.Model(MODEL_PATH)
-ds.enableExternalScorer(SCORER_PATH)
+def analyze_semantic_similarity(source_text, target_text):
+    # Perform semantic similarity analysis using BERT embeddings
+    source_embedding = bert_pipeline(source_text)[0]
+    target_embedding = bert_pipeline(target_text)[0]
 
-# Function to perform ASR using DeepSpeech
-def perform_asr(audio_file):
-    with tempfile.NamedTemporaryFile(delete=False) as temp_audio:
-        temp_audio.write(audio_file.read())
-        temp_audio_path = temp_audio.name
-    # Perform ASR using DeepSpeech
-    audio, rate = librosa.load(temp_audio_path, sr=16000)
-    transcript = ds.stt(audio)
-    os.remove(temp_audio_path)
-    return transcript
-
-# Function to compute semantic similarity using BERT embeddings
-def compute_semantic_similarity(source_text, target_text):
-    # Tokenize and encode the texts
-    inputs = tokenizer(source_text, target_text, return_tensors='pt', padding=True, truncation=True)
-    with torch.no_grad():
-        # Get embeddings from BERT
-        embeddings = model(**inputs).last_hidden_state
-        # Compute cosine similarity between embeddings
-        similarity_score = torch.cosine_similarity(embeddings[0], embeddings[1], dim=1)
-    return similarity_score.item()
-
-# Function to compute similarity matrix and tokens
-def compute_similarity_matrix(source_text, target_text):
-    # Tokenize texts
-    source_tokens = tokenizer.tokenize(source_text)
-    target_tokens = tokenizer.tokenize(target_text)
+    # Calculate similarity score (cosine similarity)
+    similarity_score = np.dot(source_embedding, target_embedding) / (np.linalg.norm(source_embedding) * np.linalg.norm(target_embedding))
     
-    # Encode tokens
-    inputs = tokenizer(source_text, target_text, return_tensors='pt', padding=True, truncation=True)
-    
-    with torch.no_grad():
-        # Get embeddings from BERT
-        embeddings = model(**inputs).last_hidden_state
-        
-        # Compute cosine similarity matrix
-        similarity_matrix = torch.cosine_similarity(embeddings[0], embeddings[1], dim=1).reshape(len(source_tokens), len(target_tokens))
-        
-    return similarity_matrix, source_tokens, target_tokens
+    return similarity_score
 
-# Function to plot similarity heatmap
-def plot_similarity_heatmap(similarity_matrix, source_tokens, target_tokens):
-    plt.figure(figsize=(10, 8))
-    plt.imshow(similarity_matrix, cmap='YlGnBu', interpolation='nearest')
-    plt.colorbar()
-    
-    # Set axis labels and ticks
-    plt.xticks(ticks=np.arange(len(target_tokens)), labels=target_tokens, rotation=45, ha='right')
-    plt.yticks(ticks=np.arange(len(source_tokens)), labels=source_tokens)
-    
-    # Set plot title and labels
-    plt.title('Semantic Similarity Heat Map')
-    plt.xlabel('Target Tokens')
-    plt.ylabel('Source Tokens')
-    
-    # Show plot
-    st.pyplot(plt)
+def analyze_audio(audio_file):
+    # Perform audio analysis
+    waveform, sample_rate = librosa.load(audio_file, sr=None)
+    durations = librosa.effects.split(waveform, top_db=20)
+    pauses = np.array([duration[1] - duration[0] for duration in durations])
 
-# Streamlit app
+    # Calculate filler words and hesitations
+    filler_words = ["ehm", "uhm"]  # Example filler words, you can expand this list
+    filler_word_count = sum(w in audio_file.lower() for w in filler_words)
+    hesitation_count = len(pauses[pauses > 3])
+
+    # Plot waveform and pauses
+    plt.figure(figsize=(10, 6))
+    plt.subplot(2, 1, 1)
+    plt.plot(waveform)
+    plt.title('Waveform')
+    plt.subplot(2, 1, 2)
+    plt.plot(gaussian_filter1d(pauses, sigma=2))
+    plt.title('Pauses (smoothed)')
+    st.pyplot()
+
+    return filler_word_count, hesitation_count
+
 def main():
-    st.title("Interpreting Feedback Tool")
-    
-    st.header("Upload Reference Source Text")
-    source_text = st.text_area("Paste or upload the source text here")
-    
-    st.header("Upload Target Rendition Text or Audio")
-    target_text_file = st.file_uploader("Upload target text file (or audio file)", type=["txt", "mp3", "wav"])
-    
-    # Convert audio to text using DeepSpeech ASR
-    if target_text_file is not None:
-        if target_text_file.type == "audio/wav" or target_text_file.type == "audio/mp3":
-            transcript = perform_asr(target_text_file)
+    st.title('Semantic Similarity and Audio Analysis')
+
+    st.header('Upload Source Text')
+    source_text = st.text_area('Enter or upload source text')
+
+    st.header('Upload Target Text/Audio')
+    target_text = st.text_area('Enter target text or upload audio (.wav)')
+
+    if st.button('Analyze'):
+        similarity_score = analyze_semantic_similarity(source_text, target_text)
+
+        if target_text.strip().endswith('.wav'):
+            audio_file = target_text.strip()
+            filler_words_count, hesitation_count = analyze_audio(audio_file)
+            st.write(f'Filler Words Count: {filler_words_count}')
+            st.write(f'Hesitation Count (>3s): {hesitation_count}')
         else:
-            transcript = str(target_text_file.read(), "utf-8")
-    
-        st.subheader("Automatic Speech Recognition (ASR) Transcript")
-        st.write(transcript)
-    
-        # Compute semantic similarity
-        if source_text:
-            similarity_score = compute_semantic_similarity(source_text, transcript)
-            st.subheader("Semantic Similarity Score")
-            st.write(f"Similarity score: {similarity_score:.4f}")
-        
-        # Compute and display heat map
-        if source_text and transcript:
-            similarity_matrix, source_tokens, target_tokens = compute_similarity_matrix(source_text, transcript)
-            st.subheader("Semantic Similarity Heat Map")
-            plot_similarity_heatmap(similarity_matrix.cpu().numpy(), source_tokens, target_tokens)
+            st.write(f'Semantic Similarity Score: {similarity_score}')
 
 if __name__ == "__main__":
     main()
