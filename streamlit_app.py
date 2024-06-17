@@ -1,67 +1,68 @@
 import streamlit as st
-from transformers import BertTokenizer, BertModel, pipeline
+import torch
+import torchaudio
+from transformers import AutoTokenizer, AutoModel, pipeline
 import librosa
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.ndimage import gaussian_filter1d
+from scipy import signal
 
-# Load BERT model and tokenizer
-tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
-model = BertModel.from_pretrained('bert-base-multilingual-cased')
-bert_pipeline = pipeline('feature-extraction', model=model, tokenizer=tokenizer)
+# Initialize DeepSpeech for ASR
+model_path = "path_to_deepspeech_model"  # Replace with your DeepSpeech model path
+model = torch.hub.load('mozilla/DeepSpeech', 'deepspeech:v0.9.3', model_path=model_path)
+model.eval()
 
-def analyze_semantic_similarity(source_text, target_text):
-    # Perform semantic similarity analysis using BERT embeddings
-    source_embedding = bert_pipeline(source_text)[0]
-    target_embedding = bert_pipeline(target_text)[0]
+# Initialize Hugging Face Transformer model
+model_name = "bert-base-multilingual-cased"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model_transformer = AutoModel.from_pretrained(model_name)
+similarity_pipeline = pipeline('feature-extraction', model=model_transformer, tokenizer=tokenizer)
 
-    # Calculate similarity score (cosine similarity)
-    similarity_score = np.dot(source_embedding, target_embedding) / (np.linalg.norm(source_embedding) * np.linalg.norm(target_embedding))
-    
+def deepspeech_asr(audio_file):
+    waveform, sample_rate = librosa.load(audio_file, sr=None)
+    waveform_tensor = torch.tensor(waveform)
+    text = model.stt(waveform_tensor)
+    return text
+
+def semantic_similarity(source_text, target_text):
+    source_encoding = similarity_pipeline(source_text, return_tensors="pt")
+    target_encoding = similarity_pipeline(target_text, return_tensors="pt")
+    similarity_score = torch.nn.functional.cosine_similarity(source_encoding, target_encoding).item()
     return similarity_score
 
-def analyze_audio(audio_file):
-    # Perform audio analysis
+def plot_heatmap(audio_file):
     waveform, sample_rate = librosa.load(audio_file, sr=None)
-    durations = librosa.effects.split(waveform, top_db=20)
-    pauses = np.array([duration[1] - duration[0] for duration in durations])
-
-    # Calculate filler words and hesitations
-    filler_words = ["ehm", "uhm"]  # Example filler words, you can expand this list
-    filler_word_count = sum(waveform.lower().count(w) for w in filler_words)
-    hesitation_count = len(pauses[pauses > 3])
-
-    # Plot waveform and pauses
-    plt.figure(figsize=(10, 6))
-    plt.subplot(2, 1, 1)
-    plt.plot(waveform)
-    plt.title('Waveform')
-    plt.subplot(2, 1, 2)
-    plt.plot(gaussian_filter1d(pauses, sigma=2))
-    plt.title('Pauses (smoothed)')
+    f, t, Sxx = signal.spectrogram(waveform, sample_rate)
+    plt.pcolormesh(t, f, 10 * np.log10(Sxx), shading='gouraud')
+    plt.ylabel('Frequency [Hz]')
+    plt.xlabel('Time [sec]')
+    plt.title('Spectrogram')
     st.pyplot()
 
-    return filler_word_count, hesitation_count
-
 def main():
-    st.title('Semantic Similarity and Audio Analysis')
+    st.title("Automatic Speech Recognition and Semantic Similarity Analysis")
 
-    st.header('Upload Source Text')
-    source_text = st.text_area('Enter or upload source text')
+    uploaded_file = st.file_uploader("Upload an audio file", type=["wav", "mp3"])
+    if uploaded_file is not None:
+        st.audio(uploaded_file, format='audio/wav')
 
-    st.header('Upload Target Text/Audio')
-    target_text = st.text_area('Enter target text or upload audio (.wav)')
+        # Perform ASR using DeepSpeech
+        st.subheader("Speech Recognition Result")
+        text_result = deepspeech_asr(uploaded_file)
+        st.write(f"Recognized Text: {text_result}")
 
-    if st.button('Analyze'):
-        similarity_score = analyze_semantic_similarity(source_text, target_text)
+        # Semantic similarity with a reference text
+        st.subheader("Semantic Similarity Analysis")
+        reference_text = st.text_area("Enter reference text")
+        if st.button("Calculate Similarity"):
+            if reference_text:
+                similarity_score = semantic_similarity(reference_text, text_result)
+                st.write(f"Semantic Similarity Score: {similarity_score:.4f}")
 
-        if target_text.strip().endswith('.wav'):
-            audio_file = target_text.strip()
-            filler_words_count, hesitation_count = analyze_audio(audio_file)
-            st.write(f'Filler Words Count: {filler_words_count}')
-            st.write(f'Hesitation Count (>3s): {hesitation_count}')
-        else:
-            st.write(f'Semantic Similarity Score: {similarity_score}')
+        # Display spectrogram heatmap
+        st.subheader("Spectrogram")
+        if st.button("Show Spectrogram"):
+            plot_heatmap(uploaded_file)
 
 if __name__ == "__main__":
     main()
