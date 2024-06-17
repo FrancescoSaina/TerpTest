@@ -1,34 +1,30 @@
 import streamlit as st
 from sentence_transformers import SentenceTransformer, util
-import torch
+
+# Load multilingual sentence embeddings model
+model_name = 'sentence-transformers/LaBSE'
+model = SentenceTransformer(model_name)
 
 def main():
-    st.title("Semantic Similarity Analysis")
+    st.title('Semantic Similarity Comparison')
 
-    # File uploader for source text
-    st.subheader("Upload Source Text")
-    source_text = st.file_uploader("Upload a text file or provide a direct link")
+    # Input text fields
+    source_text = st.text_area('Enter source text (language 1)', '')
+    target_text = st.text_area('Enter target text (language 2)', '')
 
-    # File uploader for target text
-    st.subheader("Upload Target Text")
-    target_text = st.file_uploader("Upload a text file or provide a direct link")
+    if st.button('Compare'):
+        if source_text.strip() == '' or target_text.strip() == '':
+            st.warning('Please enter both source and target texts.')
+        else:
+            # Encode texts into embeddings
+            source_embedding = model.encode(source_text, convert_to_tensor=True)
+            target_embedding = model.encode(target_text, convert_to_tensor=True)
 
-    # Semantic similarity calculation
-    if source_text and target_text:
-        st.subheader("Semantic Similarity Score")
+            # Calculate cosine similarity
+            similarity_score = util.pytorch_cos_sim(source_embedding, target_embedding).item()
 
-        # Load a pre-trained Sentence Transformer model
-        model = SentenceTransformer('distiluse-base-multilingual-cased')
+            # Display similarity score
+            st.success(f'Semantic Similarity Score: {similarity_score:.4f}')
 
-        # Encode sentences
-        source_embeddings = model.encode(source_text.read().decode('utf-8').splitlines())
-        target_embeddings = model.encode(target_text.read().decode('utf-8').splitlines())
-
-        # Calculate similarity scores
-        similarity_scores = util.pytorch_cos_sim(source_embeddings, target_embeddings)
-
-        # Display similarity score
-        st.write(f"Similarity Score: {similarity_scores.item()}")
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
