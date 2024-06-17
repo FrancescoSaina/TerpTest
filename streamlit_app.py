@@ -4,17 +4,23 @@ from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 import torchaudio
 from laserembeddings import Laser
 import torch
+from collections import Counter
+import numpy as np
+
+# Function to download LASER models
+def download_laser_models(laser_dir):
+    os.makedirs(laser_dir, exist_ok=True)
+    os.system(f"wget -P {laser_dir} https://dl.fbaipublicfiles.com/laser/models/bilstm.93langs.2018-12-26.pt")
+    os.system(f"wget -P {laser_dir} https://dl.fbaipublicfiles.com/laser/models/bpe.codes.93langs")
+    os.system(f"wget -P {laser_dir} https://dl.fbaipublicfiles.com/laser/models/eparl7.fnames")
 
 # Set up LASER environment
-LASER_DIR = "/path/to/your/laser/models"  # Change this to your path
+LASER_DIR = "./laser_models"  # Local path for LASER models
 os.environ["LASER"] = LASER_DIR
 
 # Download LASER models if they are not present
-if not os.path.exists(LASER_DIR):
-    os.makedirs(LASER_DIR)
-    os.system(f"wget -P {LASER_DIR} https://dl.fbaipublicfiles.com/laser/models/bilstm.93langs.2018-12-26.pt")
-    os.system(f"wget -P {LASER_DIR} https://dl.fbaipublicfiles.com/laser/models/bpe.codes.93langs")
-    os.system(f"wget -P {LASER_DIR} https://dl.fbaipublicfiles.com/laser/models/eparl7.fnames")
+if not os.path.exists(os.path.join(LASER_DIR, "bilstm.93langs.2018-12-26.pt")):
+    download_laser_models(LASER_DIR)
 
 # Initialize LASER
 laser = Laser()
@@ -68,7 +74,6 @@ if st.button("Analyze"):
     st.write(f"Cosine Similarity: {similarity.item()}")
 
     # Display most frequently repeated words in the target text
-    from collections import Counter
     target_words = target_text.split()
     word_freq = Counter(target_words)
     most_common_words = word_freq.most_common(10)
@@ -83,9 +88,7 @@ if st.button("Analyze"):
     st.subheader("Filler Words Count")
     st.write(filler_count)
     
-    # Display long pauses
     if uploaded_file is not None:
-        import numpy as np
         # Detect pauses longer than 3 seconds
         pause_threshold = 3 * sample_rate
         pauses = []
