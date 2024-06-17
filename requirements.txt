@@ -1,8 +1,5 @@
 streamlit
 torch
-laserembeddings
-librosa
-matplotlib
-numpy
-pandas
+torchaudio
 transformers
+laserembeddings
