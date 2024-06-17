@@ -3,9 +3,10 @@ import torch
 import torchaudio
 import pandas as pd
 import numpy as np
-from transformers import pipeline, AutoModelForSequenceClassification, AutoTokenizer
+from transformers import pipeline, AutoModelForSequenceClassification, AutoTokenizer, AutoModel
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from scipy.io import wavfile
 
 # Title of the web app
 st.title("Speech-to-Text with Transformers")
@@ -48,13 +49,14 @@ if uploaded_file is not None:
     # Perform speech-to-text
     st.write("Transcribing audio...")
     transcription = asr_model(waveform, sampling_rate=sample_rate)
-    st.write("Transcription:", transcription['text'])
+    transcribed_text = transcription['text']
+    st.write("Transcription:", transcribed_text)
 
     # Semantic similarity check
     reference_text = st.text_area("Enter reference text for semantic similarity check:", "")
     if reference_text:
         st.write("Calculating semantic similarity...")
-        inputs = similarity_tokenizer([reference_text, transcription['text']], return_tensors='pt', truncation=True, padding=True)
+        inputs = similarity_tokenizer([reference_text, transcribed_text], return_tensors='pt', truncation=True, padding=True)
         with torch.no_grad():
             outputs = similarity_model(**inputs)
             similarity_score = cosine_similarity(outputs.logits[0].unsqueeze(0), outputs.logits[1].unsqueeze(0))[0][0]
@@ -63,16 +65,45 @@ if uploaded_file is not None:
     # Word frequency analysis
     st.write("Calculating word frequencies...")
     vectorizer = CountVectorizer()
-    word_counts = vectorizer.fit_transform([transcription['text']]).toarray().flatten()
+    word_counts = vectorizer.fit_transform([transcribed_text]).toarray().flatten()
     word_freq = dict(zip(vectorizer.get_feature_names_out(), word_counts))
     word_freq_df = pd.DataFrame(list(word_freq.items()), columns=['Word', 'Frequency'])
     st.write(word_freq_df)
 
+    # Frequently repeated words
+    st.write("Frequently repeated words:")
+    repeated_words_df = word_freq_df[word_freq_df['Frequency'] > 1].sort_values(by='Frequency', ascending=False)
+    st.write(repeated_words_df)
+
     # Filler word analysis
     st.write("Analyzing filler words...")
-    fillers = ['um', 'uh', 'like', 'you know', 'so', 'actually', 'basically', 'seriously', 'literally']
-    filler_counts = {filler: transcription['text'].lower().split().count(filler) for filler in fillers}
+    fillers = ['um', 'uh', 'like', 'you know', 'so', 'actually', 'basically', 'seriously', 'literally', 'ehm', 'uhm']
+    filler_counts = {filler: transcribed_text.lower().split().count(filler) for filler in fillers}
     filler_counts_df = pd.DataFrame(list(filler_counts.items()), columns=['Filler Word', 'Count'])
     st.write(filler_counts_df)
+
+    # Detecting pauses longer than 3 seconds
+    st.write("Detecting pauses longer than 3 seconds...")
+    def detect_pauses(waveform, sample_rate, threshold=3):
+        energy = np.mean(waveform**2, axis=0)
+        silence_threshold = 0.01 * np.max(energy)
+        pause_durations = []
+        current_pause_duration = 0
+        for e in energy:
+            if e < silence_threshold:
+                current_pause_duration += 1
+            else:
+                if current_pause_duration >= threshold * sample_rate:
+                    pause_durations.append(current_pause_duration / sample_rate)
+                current_pause_duration = 0
+        return pause_durations
+
+    pauses = detect_pauses(waveform, sample_rate)
+    if pauses:
+        pause_times_df = pd.DataFrame(pauses, columns=['Pause Duration (seconds)'])
+        st.write(pause_times_df)
+    else:
+        st.write("No pauses longer than 3 seconds detected.")
+
 else:
     st.write("Please upload an audio file to transcribe.")
